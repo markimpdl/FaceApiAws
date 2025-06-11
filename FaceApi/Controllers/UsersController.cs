@@ -1,4 +1,5 @@
-﻿using FaceApi.Data;
+﻿using Amazon.S3.Model;
+using FaceApi.Data;
 using FaceApi.DTOs;
 using FaceApi.Models;
 using FaceApi.Services;
@@ -13,46 +14,41 @@ namespace FaceApi.Controllers
     public class UsersController : ControllerBase
     {
         private readonly IUserService _userService;
-        private readonly IAzureBlobService _azureBlobService;
-        private readonly IAzureFaceService _azureFaceService;
+        private readonly IS3StorageService _s3StorageService;
+        private readonly IRekognitionService _rekognitionService;
+        private readonly IConfiguration _config;
         private readonly ApiDbContext _db;
 
-        public UsersController(IUserService userService, 
-            IAzureBlobService azureBlobService,
-            IAzureFaceService azureFaceService,
-            ApiDbContext db)
+        public UsersController(IUserService userService,
+            IS3StorageService s3StorageService,
+            IRekognitionService rekognitionService,
+            IConfiguration config,
+        ApiDbContext db)
         {
             _userService = userService;
-            _azureBlobService = azureBlobService;
-            _azureFaceService = azureFaceService;
+            _s3StorageService = s3StorageService;
+            _rekognitionService = rekognitionService;
+            _config = config;
             _db = db;
         }
 
         [HttpPost]
         public async Task<IActionResult> Create([FromForm] CreateUserDto dto)
         {
-            if (dto.Photo == null || dto.Photo.Length == 0)
-                return BadRequest("É necessário enviar uma foto.");
-
-            // 1. Upload da foto base para o Blob
             string uniqueFileName = $"{Guid.NewGuid()}{Path.GetExtension(dto.Photo.FileName)}";
-            string photoUrl = await _azureBlobService.UploadAsync(dto.Photo, uniqueFileName);
-
-            // 2. Prepara lista de UserSchool já com AzurePersonId
+            string photoUrl = await _s3StorageService.UploadAsync(dto.Photo, uniqueFileName);
+            string bucket = _config["S3:Bucket"];
             var userSchools = new List<UserSchool>();
 
             foreach (var schoolId in dto.SchoolIds)
             {
-                string groupId = $"escola_{schoolId}";
-                await _azureFaceService.CreatePersonGroupAsync(groupId, groupId);
-                string personId = await _azureFaceService.CreatePersonAsync(groupId, dto.Name);
-                await _azureFaceService.AddFaceToPersonAsync(groupId, personId, photoUrl);
-                await _azureFaceService.TrainPersonGroupAsync(groupId);
+                string collectionId = $"escola_{schoolId}";
+                await _rekognitionService.CreateCollectionIfNotExistsAsync(collectionId);
 
-                userSchools.Add(new UserSchool { SchoolId = schoolId, AzurePersonId = personId });
+                string faceId = await _rekognitionService.IndexFaceAsync(collectionId, bucket, uniqueFileName);
+                userSchools.Add(new UserSchool { SchoolId = schoolId, AwsFaceId = faceId });
             }
 
-            // 3. Monta User e salva tudo de uma vez só
             var user = new User
             {
                 Name = dto.Name,
@@ -63,7 +59,8 @@ namespace FaceApi.Controllers
             _db.Users.Add(user);
             await _db.SaveChangesAsync();
 
-            return Ok(user);
+            return Ok(new UserDto { Id = user.Id, Name = user.Name, BasePhotoUrl = user.BasePhotoUrl });
+
         }
 
 

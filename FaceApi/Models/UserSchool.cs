@@ -6,6 +6,6 @@
         public User User { get; set; }
         public int SchoolId { get; set; }
         public School School { get; set; }
-        public string AzurePersonId { get; set; }
+        public string AwsFaceId { get; set; }
     }
 }

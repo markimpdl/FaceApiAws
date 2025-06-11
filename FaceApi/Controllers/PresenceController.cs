@@ -1,5 +1,6 @@
 ﻿using FaceApi.Data;
 using FaceApi.DTOs;
+using FaceApi.Models;
 using FaceApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -13,49 +14,38 @@ namespace FaceApi.Controllers
     public class PresenceController : ControllerBase
     {
         private readonly IPresenceService _presenceService;
-        private readonly IAzureFaceService _faceService;
+        private readonly IRekognitionService _rekognitionService;
         private readonly ApiDbContext _db;
 
         public PresenceController(
             IPresenceService presenceService,
-            IAzureFaceService faceService,
+            IRekognitionService rekognitionService,
             ApiDbContext db)
         {
             _presenceService = presenceService;
-            _faceService = faceService;
+            _rekognitionService = rekognitionService;
             _db = db;
         }
 
         [HttpPost("checkin")]
         public async Task<IActionResult> Checkin([FromForm] PresenceCheckinDto dto)
         {
-            // 1. Detectar o rosto na foto do check-in
-            using var stream = dto.Photo.OpenReadStream();
+            string collectionId = $"escola_{dto.SchoolId}";
             string faceId;
-            try
+            using (var stream = dto.Photo.OpenReadStream())
             {
-                faceId = await _faceService.DetectFaceAsync(stream);
-            }
-            catch
-            {
-                return BadRequest("Nenhum rosto detectado na imagem.");
+                faceId = await _rekognitionService.SearchFaceByImageAsync(collectionId, stream);
             }
 
-            // 2. Identificar o professor no grupo da escola
-            string groupId = $"escola_{dto.SchoolId}";
-            string personId = await _faceService.IdentifyAsync(groupId, faceId);
-
-            if (personId == null)
+            if (string.IsNullOrEmpty(faceId))
                 return NotFound("Rosto não reconhecido.");
 
-            // 3. Encontrar o professor vinculado a esse personId
             var userSchool = await _db.UserSchools
                 .Include(us => us.User)
-                .FirstOrDefaultAsync(us => us.SchoolId == dto.SchoolId && us.AzurePersonId == personId);
+                .FirstOrDefaultAsync(us => us.SchoolId == dto.SchoolId && us.AwsFaceId == faceId);
 
             if (userSchool == null)
-                return NotFound("Professor não encontrado nesta escola.");
-
+                return NotFound("Usuário não encontrado nesta escola.");
             // 4. Registrar presença no banco (service)
             var record = await _presenceService.RegisterAsync(userSchool.UserId, dto.SchoolId);
 
