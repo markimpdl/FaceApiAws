@@ -1,4 +1,6 @@
 ﻿using FaceApi.Data;
+using FaceApi.DTOs;
+using FaceApi.Enums;
 using FaceApi.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,16 +11,19 @@ namespace FaceApi.Services
         private readonly ApiDbContext _db;
         public PresenceService(ApiDbContext db) => _db = db;
 
-        public async Task<PresenceRecord> RegisterAsync(int userId, int schoolId)
+        public async Task<PresenceRecord> RegisterAsync(int userId, int schoolId, string awsFaceId, string geoLocalization, UserType userType)
         {
             var userSchool = await _db.UserSchools.FirstOrDefaultAsync(us => us.UserId == userId && us.SchoolId == schoolId);
             if (userSchool == null)
-                throw new Exception("Professor não vinculado a esta escola!");
+                throw new Exception("User not found in this school!");
 
             var record = new PresenceRecord
             {
                 UserId = userId,
                 SchoolId = schoolId,
+                AwsFaceId = awsFaceId,
+                GeoLocalization = geoLocalization,
+                UserType = userType,
                 DateTime = DateTime.UtcNow
             };
 
@@ -27,7 +32,8 @@ namespace FaceApi.Services
             return record;
         }
 
-        public async Task<List<PresenceRecord>> FilterAsync(DateTime? start, DateTime? end, int? userId, int? schoolId)
+        public async Task<List<PresenceRecordDto>> FilterAsync(
+     DateTime? start, DateTime? end, int? userId, int? schoolId, UserType? userType)
         {
             var query = _db.PresenceRecords
                 .Include(p => p.User)
@@ -36,6 +42,8 @@ namespace FaceApi.Services
 
             if (start.HasValue)
                 query = query.Where(x => x.DateTime >= start.Value);
+            if (userType.HasValue)
+                query = query.Where(x => x.UserType == userType);
             if (end.HasValue)
                 query = query.Where(x => x.DateTime <= end.Value);
             if (userId.HasValue)
@@ -43,7 +51,20 @@ namespace FaceApi.Services
             if (schoolId.HasValue)
                 query = query.Where(x => x.SchoolId == schoolId);
 
-            return await query.OrderByDescending(x => x.DateTime).ToListAsync();
+            var uaeTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Arabian Standard Time");
+
+            var result = await query
+                .OrderByDescending(x => x.DateTime)
+                .Select(x => new PresenceRecordDto
+                {
+                    LocalDateTime = TimeZoneInfo.ConvertTimeFromUtc(x.DateTime, uaeTimeZone),
+                    UserName = x.User.Name,
+                    SchoolName = x.School.Name,
+                    UserType = x.User.UserType
+                })
+                .ToListAsync();
+
+            return result;
         }
     }
 }

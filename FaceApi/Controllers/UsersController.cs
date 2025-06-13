@@ -5,6 +5,7 @@ using FaceApi.Models;
 using FaceApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace FaceApi.Controllers
 {
@@ -35,6 +36,21 @@ namespace FaceApi.Controllers
         [HttpPost]
         public async Task<IActionResult> Create([FromForm] CreateUserDto dto)
         {
+            if (dto.Photo == null)
+                return BadRequest("Invalid Photo");
+            if (dto.SchoolIds == null || dto.SchoolIds.Count == 0)
+                return BadRequest("Invalid schools");
+
+            // Verifica se todas as escolas existem
+            var existingSchoolIds = await _db.Schools
+                .Where(s => dto.SchoolIds.Contains(s.Id))
+                .Select(s => s.Id)
+                .ToListAsync();
+
+            var missingSchools = dto.SchoolIds.Except(existingSchoolIds).ToList();
+            if (missingSchools.Any())
+                return BadRequest($"Invalid School IDs: {string.Join(", ", missingSchools)}");
+
             string uniqueFileName = $"{Guid.NewGuid()}{Path.GetExtension(dto.Photo.FileName)}";
             string photoUrl = await _s3StorageService.UploadAsync(dto.Photo, uniqueFileName);
             string bucket = _config["S3:Bucket"];
@@ -53,13 +69,14 @@ namespace FaceApi.Controllers
             {
                 Name = dto.Name,
                 BasePhotoUrl = photoUrl,
-                UserSchools = userSchools
+                UserSchools = userSchools,
+                UserType = dto.UserType
             };
 
             _db.Users.Add(user);
             await _db.SaveChangesAsync();
 
-            return Ok(new UserDto { Id = user.Id, Name = user.Name, BasePhotoUrl = user.BasePhotoUrl });
+            return Ok(new UserDto { Id = user.Id, Name = user.Name, BasePhotoUrl = user.BasePhotoUrl, UserType=user.UserType });
 
         }
 

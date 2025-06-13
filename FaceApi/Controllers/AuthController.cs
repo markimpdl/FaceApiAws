@@ -34,7 +34,7 @@ namespace FaceApi.Controllers
             if (!result.Succeeded)
                 return BadRequest(result.Errors);
 
-            return Ok("Administrador cadastrado!");
+            return Ok("Administrator registered!");
         }
 
         [HttpPost("login")]
@@ -42,11 +42,11 @@ namespace FaceApi.Controllers
         {
             var user = await _userManager.FindByNameAsync(dto.Username);
             if (user == null)
-                return Unauthorized("Usuário ou senha inválidos");
+                return Unauthorized("Invalid user or password");
 
             var result = await _signInManager.CheckPasswordSignInAsync(user, dto.Password, false);
             if (!result.Succeeded)
-                return Unauthorized("Usuário ou senha inválidos");
+                return Unauthorized("Invalid user or password");
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

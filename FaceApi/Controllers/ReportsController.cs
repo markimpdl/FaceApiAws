@@ -3,17 +3,18 @@ using FaceApi.Services;
 using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using FaceApi.Enums;
 
 namespace FaceApi.Controllers
 {
-    [Authorize(Roles = "Admin")]
+    [Authorize]
     [ApiController]
     [Route("api/[controller]")]
     public class ReportsController : ControllerBase
     {
-        private readonly PresenceService _presenceService;
+        private readonly IPresenceService _presenceService;
 
-        public ReportsController(PresenceService presenceService)
+        public ReportsController(IPresenceService presenceService)
         {
             _presenceService = presenceService;
         }
@@ -29,24 +30,30 @@ namespace FaceApi.Controllers
             [FromQuery] DateTime? start,
             [FromQuery] DateTime? end,
             [FromQuery] int? userId,
-            [FromQuery] int? schoolId)
+            [FromQuery] int? schoolId,
+            [FromQuery] UserType? userType)
         {
-            var records = await _presenceService.FilterAsync(start, end, userId, schoolId);
+            var records = await _presenceService.FilterAsync(start, end, userId, schoolId, userType);
 
             using var workbook = new XLWorkbook();
             var ws = workbook.Worksheets.Add("Presenças");
 
             // Cabeçalho
-            ws.Cell(1, 1).Value = "Data/Hora";
-            ws.Cell(1, 2).Value = "Professor";
-            ws.Cell(1, 3).Value = "Escola";
+            ws.Cell(1, 1).Value = "Date/Time";
+            ws.Cell(1, 2).Value = "User";
+            ws.Cell(1, 3).Value = "School";
+            ws.Cell(1, 4).Value = "Type";
+
+            var uaeTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Arabian Standard Time");
 
             // Dados
             for (int i = 0; i < records.Count; i++)
             {
-                ws.Cell(i + 2, 1).Value = records[i].DateTime.ToString("dd/MM/yyyy HH:mm", new CultureInfo("pt-BR"));
+                var localDateTime = TimeZoneInfo.ConvertTimeFromUtc(records[i].DateTime, uaeTimeZone);
+                ws.Cell(i + 2, 1).Value = localDateTime.ToString("dd/MM/yyyy HH:mm", new CultureInfo("pt-BR"));
                 ws.Cell(i + 2, 2).Value = records[i].User.Name;
                 ws.Cell(i + 2, 3).Value = records[i].School.Name;
+                ws.Cell(i + 2, 4).Value = records[i].User.UserType.ToString();
             }
 
             ws.Columns().AdjustToContents();
@@ -56,7 +63,10 @@ namespace FaceApi.Controllers
             workbook.SaveAs(stream);
             stream.Position = 0;
 
-            string filename = $"Presencas_{DateTime.Now:yyyyMMdd_HHmm}.xlsx";
+            // Ajustar data do nome do arquivo para o horário local dos EAU
+            var localNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, uaeTimeZone);
+            string filename = $"Presencas_{localNow:yyyyMMdd_HHmm}.xlsx";
+
             return File(stream.ToArray(),
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 filename);
